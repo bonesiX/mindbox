@@ -73,8 +73,29 @@ spec:
         target:
           type: AverageValue
           averageValue: 110m
-
+  # Забыл про флоппинг "Стабильное окно"
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 10
+          periodSeconds: 60
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+      selectPolicy: Min
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 4
+          periodSeconds: 15
+      selectPolicy: Max
+  
 # Были мысли добавить в HPA initialReadinessDelay (--horizontal-pod-autoscaler-initial-readiness-delay flag)
 # Для того, чтобы HPA не начал скейлить поды в момент запуска, т.к. в момент запуска всегда высокое потребление
 # Но этот параметр по умолчанию = 30с, так что его вполне хватит на запуск в 5-10с
-
