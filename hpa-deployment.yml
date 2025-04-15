@@ -1,0 +1,80 @@
+---
+# Сказано deployment - пишем deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  labels:
+    app: nginx
+spec:
+  # Ставим минимальное кол-во реплик, чтоб работал деплоймент
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      # Используем affinity для размещения подов по зонам
+      affinity:
+        # Используем antiaffinity и preferredDuringSchedulingIgnoredDuringExecution
+        # чтобы поды "предпочтительно" скейлились в разных зонах для отказоустойчивости
+        # Можно было бы использовать podAffinity в сочетании с requiredDuringSchedulingIgnoredDuringExecution
+        # если бы была нужна максимальная производительность и зоны были распределны географически (Москва, Сахалин, Австралия)
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            # Ставим максимальный вес (просто хороший тон, правило preferred все равно одно)
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - nginx
+                # Распределяем поды по зонам, сначала думал по нодам, но под и так шедулером отправится на самую незагруженную ноду
+                topologyKey: topology.kubernetes.io/zone
+      containers:
+        - name: nginx
+          image: nginx:stable
+          resources:
+            # По реквестам все понятно - берем из условия
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            # По лимитам уже интересно:
+            # ЦПУ не стал ставить лимит, т.к. неизвестно, что значит "значительно больше"
+            # Хотя сказано что потребление "ровное" не стал в лимит ставить 128метров, дал 150 (небольшой запас), чтоб не пришел ООМ
+            limits:
+              memory: "150Mi"
+---
+# Пишем горизонтальный скейлер
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nginx-hpa
+spec:
+  # Вяжем его к нашему деплойменту
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nginx-deployment
+  # Согласно условию заполняем параметры масштабирования (в пике 4)
+  minReplicas: 1
+  maxReplicas: 4
+  metrics:
+    # Т.к. значение памяти ровное во всем жизненном цикле пода
+    # масштабировать будем по значению ЦПУ, можно было бы масштабировать по averageUtilization, но по конкретному значению показалось проще
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: AverageValue
+          averageValue: 110m
+
+# Были мысли добавить в HPA initialReadinessDelay (--horizontal-pod-autoscaler-initial-readiness-delay flag)
+# Для того, чтобы HPA не начал скейлить поды в момент запуска, т.к. в момент запуска всегда высокое потребление
+# Но этот параметр по умолчанию = 30с, так что его вполне хватит на запуск в 5-10с
+
